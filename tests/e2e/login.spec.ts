@@ -3,7 +3,7 @@ import { login, openApp, TEST_PASSWORD } from './helpers';
 
 test('الدخول: إنشاء كلمة المرور، رفض الخاطئة، القفل عند إعادة التحميل، والخروج', async ({ page }) => {
   await page.goto('/#/tasks');
-  await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'تسجيل الدخول', exact: true })).toBeVisible();
   await expect(page.getByRole('radio')).toHaveCount(2);
 
   // كلمة مرور ضعيفة مرفوضة
@@ -19,7 +19,7 @@ test('الدخول: إنشاء كلمة المرور، رفض الخاطئة، �
 
   // مفتاح البيانات في الذاكرة فقط: إعادة التحميل تتطلب الدخول مجددًا
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'تسجيل الدخول', exact: true })).toBeVisible();
 
   await page.getByRole('radio', { name: /مدير النظام/ }).click();
   await page.getByLabel('كلمة المرور', { exact: true }).fill('wrong-pass-1');
@@ -31,7 +31,7 @@ test('الدخول: إنشاء كلمة المرور، رفض الخاطئة، �
 
   await page.getByRole('button', { name: 'قائمة الحساب' }).click();
   await page.getByRole('menuitem', { name: 'تسجيل الخروج' }).click();
-  await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'تسجيل الدخول', exact: true })).toBeVisible();
 });
 
 test('تفعيل المدير الثاني بكلمة مؤقتة ثم إلزامه بتغييرها، ورؤيته لنفس البيانات', async ({ page }) => {

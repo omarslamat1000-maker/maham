@@ -5,7 +5,7 @@ export const TEST_PASSWORD = 'maham-e2e-2026';
 
 /** يختار ملف العمل ويسجل الدخول (وينشئ كلمة المرور في أول دخول) */
 export async function login(page: Page, profile = 'مدير النظام', password = TEST_PASSWORD) {
-  await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'تسجيل الدخول', exact: true })).toBeVisible();
   await page.getByRole('radio', { name: new RegExp(profile) }).click();
   await page.getByLabel(/^كلمة المرور/).fill(password);
   const confirm = page.getByLabel('تأكيد كلمة المرور');
@@ -20,7 +20,7 @@ export async function login(page: Page, profile = 'مدير النظام', passw
 
 export async function openApp(page: Page, path = '/') {
   await page.goto(`/#${path}`);
-  const loginHeading = page.getByRole('heading', { name: 'تسجيل الدخول' });
+  const loginHeading = page.getByRole('heading', { name: 'تسجيل الدخول', exact: true });
   const shell = page.getByRole('button', { name: 'قائمة الحساب' });
   await expect(loginHeading.or(shell)).toBeVisible();
   if (await loginHeading.isVisible()) await login(page);
