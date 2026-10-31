@@ -20,9 +20,10 @@
 4. كل سجل له `id` (UUID) و`createdAt/updatedAt/createdBy/updatedBy`. استخدم `audit()` و`touched()` من `services/core.ts`.
 5. كل تعديل ذو معنى يُسجَّل عبر `logActivity()`.
 6. العمليات متعددة الجداول داخل `store.transaction()`.
-7. الإكمال لا يتم إلا عبر `approvalService.perform(taskId, 'approved')` بعد استيفاء قائمة التحقق.
-8. تغيير بنية IndexedDB: أضف `this.version(N+1)` في `src/data/db.ts` (لا تعدّل النسخ السابقة) وحدّث `SCHEMA_VERSION` و`migrateBackupData`.
-9. التوجيه عبر `HashRouter` (متوافق مع GitHub Pages دون أخطاء 404 عند التحديث).
+7. التطبيق كله خلف `LoginPage` (`useAuthStore`). المستخدم الحالي = `useAuthStore.userId` (لكل تبويب)، وليس `settings.currentUserId`. لا تضف تبديل ملف دون كلمة مرور.
+8. الإكمال لا يتم إلا عبر `approvalService.perform(taskId, 'approved')` بعد استيفاء قائمة التحقق.
+9. تغيير بنية IndexedDB: أضف `this.version(N+1)` في `src/data/db.ts` (لا تعدّل النسخ السابقة) وحدّث `SCHEMA_VERSION` و`migrateBackupData`.
+10. التوجيه عبر `HashRouter` (متوافق مع GitHub Pages دون أخطاء 404 عند التحديث).
 
 ## Coding Standards
 
@@ -85,7 +86,7 @@ npm run test:e2e     # Playwright (يبني ويشغّل preview على 4174)
 npm run check        # typecheck + lint + test + build
 ```
 
-أول تشغيل لـ e2e: `npx playwright install chromium`.
+أول تشغيل لـ e2e: `npx playwright install chromium`. الاختبارات تسجّل الدخول تلقائيًا عبر `openApp()` بكلمة مرور اختبارية (`tests/e2e/helpers.ts`).
 
 ## Deployment Process
 
@@ -97,7 +98,7 @@ npm run check        # typecheck + lint + test + build
 ## Known Limitations
 
 - البيانات محلية لكل متصفح/جهاز؛ النقل يدوي عبر النسخ الاحتياطي.
-- ملفا العمل ليسا مصادقة؛ لا حماية للبيانات من مستخدمي نفس المتصفح.
+- تسجيل الدخول محلي (`services/authService.ts`): بصمات PBKDF2 + إيقاف مؤقت + قفل تلقائي. ليس مصادقة خادمية، والبيانات غير مشفّرة في IndexedDB. لا تصفه بأنه "آمن خادميًا".
 - التنبيهات تُولَّد فقط أثناء فتح التطبيق.
 - Gemini يدوي (لا استدعاء API مباشر).
 - PDF عبر نافذة طباعة المتصفح.

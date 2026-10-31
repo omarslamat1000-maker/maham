@@ -1,7 +1,7 @@
 {
   "name": "maham",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "مهام | MAHAM — نظام ذكي لإدارة المهام والمخرجات، عربي أولًا، يعمل دون اتصال",
   "type": "module",
   "engines": {

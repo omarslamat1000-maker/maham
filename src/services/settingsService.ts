@@ -1,7 +1,7 @@
 import { getStore } from '@/data/store';
 import type { AppSettings, ID, Settings, User } from '@/types/entities';
 import { nowIso } from '@/utils/date';
-import { logActivity, ServiceError, setActor, touched } from './core';
+import { logActivity, ServiceError, touched } from './core';
 import { DEFAULT_SETTINGS } from './setupService';
 
 export const settingsService = {
@@ -22,24 +22,21 @@ export const settingsService = {
     if (patch.maxFileSizeMb !== undefined && (patch.maxFileSizeMb < 1 || patch.maxFileSizeMb > 200)) {
       throw new ServiceError('الحد الأقصى لحجم الملف يجب أن يكون بين 1 و200 ميغابايت');
     }
+    if (patch.autoLockMinutes !== undefined && (patch.autoLockMinutes < 0 || patch.autoLockMinutes > 240)) {
+      throw new ServiceError('مدة القفل التلقائي يجب أن تكون بين 0 و240 دقيقة');
+    }
     const next: Settings = { ...current, ...patch, id: 'app', updatedAt: nowIso() };
     await store.settings.put(next);
     return next;
-  },
-
-  /** تبديل ملف العمل النشط (ليس تسجيل دخول) */
-  async switchUser(userId: ID): Promise<void> {
-    const user = await getStore().users.get(userId);
-    if (!user) throw new ServiceError('ملف العمل غير موجود');
-    await this.update({ currentUserId: userId });
-    setActor(userId);
   },
 };
 
 export const userService = {
   async list(): Promise<User[]> {
     const rows = await getStore().users.list();
-    return rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    // مدير النظام أولًا دائمًا (حتى لو أُنشئ الملفان في اللحظة نفسها)
+    const rank = (u: User) => (u.title === 'System Administrator' ? 0 : 1);
+    return rows.sort((a, b) => a.createdAt.localeCompare(b.createdAt) || rank(a) - rank(b));
   },
 
   async update(id: ID, patch: Partial<Pick<User, 'name' | 'title' | 'color'>>): Promise<void> {

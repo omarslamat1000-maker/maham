@@ -1,8 +1,30 @@
 import { expect, type Page } from '@playwright/test';
 
+/** كلمة مرور اختبارية للبيئة المحلية فقط */
+export const TEST_PASSWORD = 'maham-e2e-2026';
+
+/** يختار ملف العمل ويسجل الدخول (وينشئ كلمة المرور في أول دخول) */
+export async function login(page: Page, profile = 'مدير النظام', password = TEST_PASSWORD) {
+  await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
+  await page.getByRole('radio', { name: new RegExp(profile) }).click();
+  await page.getByLabel(/^كلمة المرور/).fill(password);
+  const confirm = page.getByLabel('تأكيد كلمة المرور');
+  if (await confirm.isVisible()) {
+    await confirm.fill(password);
+    await page.getByRole('button', { name: 'إنشاء كلمة المرور والدخول' }).click();
+  } else {
+    await page.getByRole('button', { name: 'تسجيل الدخول' }).click();
+  }
+  await expect(page.getByRole('button', { name: 'قائمة الحساب' })).toBeVisible();
+}
+
 export async function openApp(page: Page, path = '/') {
   await page.goto(`/#${path}`);
-  await expect(page.getByRole('main')).toBeVisible();
+  const loginHeading = page.getByRole('heading', { name: 'تسجيل الدخول' });
+  const shell = page.getByRole('button', { name: 'قائمة الحساب' });
+  await expect(loginHeading.or(shell)).toBeVisible();
+  if (await loginHeading.isVisible()) await login(page);
+  await expect(page.locator('#main')).toBeVisible();
 }
 
 /** إنشاء مهمة عبر نافذة الإنشاء السريع ثم فتح تفاصيلها */

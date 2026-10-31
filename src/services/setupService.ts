@@ -15,6 +15,7 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'updatedAt'> = {
   lastBackupAt: null,
   maxFileSizeMb: 25,
   onboardingDismissed: false,
+  autoLockMinutes: 15,
 };
 
 const SYSTEM = 'system';

@@ -36,6 +36,17 @@ export interface User extends AuditFields {
   color: string;
   /** محجوز للترقية المستقبلية إلى مصادقة خادمية */
   authProviderId: string | null;
+  /**
+   * قفل الدخول المحلي: بصمة كلمة المرور (PBKDF2-SHA-256) — لا تُخزَّن كلمة المرور نفسها أبدًا.
+   * حقول اختيارية للتوافق مع السجلات والنسخ الاحتياطية الأقدم.
+   */
+  passwordHash?: string | null;
+  passwordSalt?: string | null;
+  passwordIterations?: number | null;
+  passwordUpdatedAt?: Timestamp | null;
+  failedAttempts?: number;
+  lockedUntil?: Timestamp | null;
+  lastLoginAt?: Timestamp | null;
 }
 
 // ───────────── التصنيفات ─────────────
@@ -272,6 +283,8 @@ export interface AppSettings {
   lastBackupAt: Timestamp | null;
   maxFileSizeMb: number;
   onboardingDismissed: boolean;
+  /** القفل التلقائي بعد عدم النشاط بالدقائق (0 = معطّل) */
+  autoLockMinutes?: number;
 }
 
 export interface Settings extends AppSettings {

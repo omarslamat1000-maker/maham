@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router';
 import { toast } from 'sonner';
-import { Download, HardDrive, Lock, MonitorSmartphone, Palette, Plus, RotateCcw, Shield, Tags, Trash2, Upload, Users } from 'lucide-react';
+import { Download, HardDrive, KeyRound, Lock, MonitorSmartphone, Palette, Plus, RotateCcw, Shield, Tags, Trash2, Upload, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox, Field, Input, Select } from '@/components/ui/form';
 import { Badge, Card, CardContent, CardHeader, CardTitle, LoadingBlock, PageHeader, Progress } from '@/components/ui/misc';
@@ -10,10 +10,12 @@ import { useAction, useCategories, useCurrentUser, useDeletedTasks, useSettings,
 import { useInstallPrompt } from '@/hooks/usePwa';
 import { useTheme } from '@/hooks/useTheme';
 import { confirmDialog } from '@/stores/uiStore';
+import { useAuthStore } from '@/stores/authStore';
 import { settingsService, userService } from '@/services/settingsService';
 import { categoryService } from '@/services/ideaService';
 import { taskService } from '@/services/taskService';
 import { ensureSetup } from '@/services/setupService';
+import { authService, MAX_FREE_ATTEMPTS, MIN_PASSWORD_LENGTH } from '@/services/authService';
 import {
   decryptBackup,
   exportBackup,
@@ -45,6 +47,109 @@ function Section({ id, icon: Icon, title, children }: { id?: string; icon: typeo
   );
 }
 
+function SecuritySection() {
+  const users = useUsers();
+  const me = useCurrentUser();
+  const settings = useSettings();
+  const { run, pending } = useAction();
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  if (!users || !settings || !me) return <LoadingBlock rows={2} />;
+  const other = users.find((u) => u.id !== me.id);
+
+  return (
+    <Section id="security" icon={KeyRound} title="الأمان وتسجيل الدخول">
+      <div role="note" className="rounded-lg bg-muted/60 p-3 text-xs leading-relaxed text-muted-foreground">
+        تسجيل الدخول محلي: يمنع فتح التطبيق دون كلمة المرور، ويحفظ بصمة PBKDF2 فقط، ويوقف المحاولات مؤقتًا بعد {MAX_FREE_ATTEMPTS} محاولات خاطئة.
+        البيانات نفسها غير مشفّرة داخل المتصفح، لذا احمِ حساب جهازك بكلمة مرور واستخدم النسخ الاحتياطية المشفّرة.
+      </div>
+
+      <form
+        className="space-y-3 rounded-lg border border-border p-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const r = await run(() => authService.changePassword(current, next, confirm), 'تم تغيير كلمة المرور');
+          if (r !== false) {
+            setCurrent('');
+            setNext('');
+            setConfirm('');
+          }
+        }}
+      >
+        <h3 className="font-medium">تغيير كلمة مروري</h3>
+        <input type="text" name="username" autoComplete="username" value={me.name} readOnly hidden />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Field label="كلمة المرور الحالية" htmlFor="pw-current">
+            <Input id="pw-current" type="password" autoComplete="current-password" dir="ltr" value={current} onChange={(e) => setCurrent(e.target.value)} />
+          </Field>
+          <Field label="كلمة المرور الجديدة" htmlFor="pw-new" hint={`${MIN_PASSWORD_LENGTH} أحرف على الأقل، حروف وأرقام`}>
+            <Input id="pw-new" type="password" autoComplete="new-password" dir="ltr" value={next} onChange={(e) => setNext(e.target.value)} />
+          </Field>
+          <Field label="تأكيد الجديدة" htmlFor="pw-confirm">
+            <Input id="pw-confirm" type="password" autoComplete="new-password" dir="ltr" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+          </Field>
+        </div>
+        <p className="text-xs text-muted-foreground">آخر تغيير: {formatDateTime(me.passwordUpdatedAt)}</p>
+        <Button type="submit" loading={pending} disabled={!current || !next || !confirm}>
+          تحديث كلمة المرور
+        </Button>
+      </form>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="القفل التلقائي عند عدم النشاط" htmlFor="pref-autolock">
+          <Select
+            id="pref-autolock"
+            value={settings.autoLockMinutes ?? 15}
+            onChange={(e) => run(() => settingsService.update({ autoLockMinutes: Number(e.target.value) }), 'تم الحفظ')}
+          >
+            {[5, 15, 30, 60, 120].map((m) => (
+              <option key={m} value={m}>
+                بعد {m} دقيقة
+              </option>
+            ))}
+            <option value={0}>معطّل (غير موصى به)</option>
+          </Select>
+        </Field>
+        {other && (
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium">كلمة مرور «{other.name}»</span>
+            <p className="text-xs text-muted-foreground">
+              {other.passwordHash ? 'عند نسيانها: أعد تعيينها، وسيُطلب منه إنشاء كلمة جديدة عند دخوله.' : 'لم تُنشأ بعد — ستُطلب عند أول دخول له.'}
+            </p>
+            {other.passwordHash && (
+              <Button
+                variant="outline"
+                className="self-start"
+                onClick={async () => {
+                  if (
+                    await confirmDialog({
+                      title: `إعادة تعيين كلمة مرور «${other.name}»؟`,
+                      description: 'سيُطلب منه إنشاء كلمة مرور جديدة عند دخوله التالي، ويُسجَّل الإجراء في سجل النشاط.',
+                      destructive: true,
+                      confirmText: 'إعادة التعيين',
+                    })
+                  )
+                    await run(() => authService.resetOtherPassword(other.id), 'تمت إعادة التعيين');
+                }}
+              >
+                إعادة تعيين كلمة مروره
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+        {users.map((u) => (
+          <span key={u.id}>
+            آخر دخول لـ«{u.name}»: {formatDateTime(u.lastLoginAt)}
+          </span>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
 function ProfilesSection() {
   const users = useUsers();
   const me = useCurrentUser();
@@ -53,7 +158,7 @@ function ProfilesSection() {
   return (
     <Section icon={Users} title="ملفات العمل">
       <p className="text-sm text-muted-foreground">
-        ملفان محليان لتنظيم الإسناد وسجل التدقيق، بالصلاحيات نفسها. هذه ليست حسابات موثّقة ولا توفر حماية للبيانات — أي شخص يستخدم هذا المتصفح يمكنه الوصول لها.
+        ملفان بالصلاحيات نفسها لتنظيم الإسناد وسجل التدقيق. للتبديل بينهما سجّل الخروج ثم ادخل بالملف الآخر.
       </p>
       {users.map((u) => (
         <form
@@ -74,13 +179,7 @@ function ProfilesSection() {
           <Button type="submit" variant="outline">
             حفظ
           </Button>
-          {u.id === me?.id ? (
-            <Badge tone="primary">النشط</Badge>
-          ) : (
-            <Button variant="ghost" onClick={() => run(() => settingsService.switchUser(u.id), `أنت الآن تعمل باسم: ${u.name}`)}>
-              التبديل إليه
-            </Button>
-          )}
+          {u.id === me?.id && <Badge tone="primary">ملفك الحالي</Badge>}
         </form>
       ))}
     </Section>
@@ -189,6 +288,7 @@ function PreferencesSection() {
 
 function BackupSection() {
   const settings = useSettings();
+  const setUser = useAuthStore((s) => s.setUser);
   const { run, pending } = useAction();
   const [includeFiles, setIncludeFiles] = useState(true);
   const [encrypt, setEncrypt] = useState(false);
@@ -254,6 +354,11 @@ function BackupSection() {
     if (r) {
       toast.success(`اكتمل الاستيراد: ${r.added} جديد، ${r.updated} محدّث، ${r.skipped} بلا تغيير، ${r.blobs} ملف`);
       setPendingImport(null);
+      if (mode === 'replace') {
+        // ملفات العمل وكلمات المرور أصبحت من النسخة المستوردة — يلزم دخول جديد
+        await authService.logout();
+        setUser(null);
+      }
     }
   };
 
@@ -499,14 +604,16 @@ function InstallSection() {
 export default function SettingsPage() {
   const location = useLocation();
   useEffect(() => {
-    if (location.hash === '#backup' || window.location.hash.endsWith('#backup')) {
-      setTimeout(() => document.getElementById('backup')?.scrollIntoView({ behavior: 'smooth' }), 100);
+    const target = location.hash.replace('#', '');
+    if (target === 'backup' || target === 'security') {
+      setTimeout(() => document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' }), 100);
     }
   }, [location]);
   return (
     <div className="space-y-6">
       <PageHeader title="الإعدادات" />
       <BackupSection />
+      <SecuritySection />
       <ProfilesSection />
       <PreferencesSection />
       <CategoriesSection />

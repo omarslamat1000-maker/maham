@@ -61,3 +61,32 @@ export async function decryptText(enc: EncryptedBlob, password: string): Promise
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: base64ToBytes(enc.cipher.iv) }, key, base64ToBytes(enc.data));
   return new TextDecoder().decode(pt);
 }
+
+// ───────────── بصمات كلمات المرور ─────────────
+
+export interface PasswordHash {
+  hash: string;
+  salt: string;
+  iterations: number;
+}
+
+/** اشتقاق بصمة كلمة المرور عبر PBKDF2-SHA-256 بملح عشوائي — لا تُحفظ كلمة المرور نفسها */
+export async function hashPassword(password: string, salt?: string, iterations = PBKDF2_ITERATIONS): Promise<PasswordHash> {
+  const saltBytes = salt ? base64ToBytes(salt) : crypto.getRandomValues(new Uint8Array(16));
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: saltBytes, iterations }, base, 256);
+  return { hash: bytesToBase64(new Uint8Array(bits)), salt: bytesToBase64(saltBytes), iterations };
+}
+
+/** مقارنة بزمن ثابت لتجنب تسريب معلومات عبر التوقيت */
+export function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+export async function verifyPassword(password: string, stored: PasswordHash): Promise<boolean> {
+  const { hash } = await hashPassword(password, stored.salt, stored.iterations);
+  return constantTimeEqual(hash, stored.hash);
+}

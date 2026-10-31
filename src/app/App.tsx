@@ -9,6 +9,10 @@ import { LoadingBlock } from '@/components/ui/misc';
 import { Button } from '@/components/ui/button';
 import { ensureSetup } from '@/services/setupService';
 import { notificationService } from '@/services/notificationService';
+import { authService, touchSession } from '@/services/authService';
+import { settingsService } from '@/services/settingsService';
+import { useAuthStore } from '@/stores/authStore';
+import LoginPage from '@/pages/LoginPage';
 import { requestPersistence } from '@/services/backupService';
 import { useTheme } from '@/hooks/useTheme';
 import DashboardPage from '@/pages/DashboardPage';
@@ -52,32 +56,63 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: boolean 
 
 function useBootstrap() {
   const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const setUser = useAuthStore((s) => s.setUser);
   useEffect(() => {
-    let timer: number | undefined;
-    const check = () => notificationService.generate().catch(() => undefined);
     ensureSetup()
-      .then(() => {
+      .then(async (settings) => {
+        setUser(await authService.restore(settings.autoLockMinutes ?? 15));
         setState('ready');
         void requestPersistence();
-        void check();
-        timer = window.setInterval(check, 5 * 60 * 1000);
-        document.addEventListener('visibilitychange', onVisible);
       })
       .catch(() => setState('error'));
-    function onVisible() {
-      if (document.visibilityState === 'visible') void check();
-    }
+  }, [setUser]);
+  return state;
+}
+
+/** يعمل فقط بعد تسجيل الدخول: التنبيهات الدورية والقفل التلقائي عند عدم النشاط */
+function useSessionServices(userId: string | null) {
+  const setUser = useAuthStore((s) => s.setUser);
+  useEffect(() => {
+    if (!userId) return;
+    const check = () => notificationService.generate().catch(() => undefined);
+    void check();
+    const timer = window.setInterval(check, 5 * 60 * 1000);
+    const onVisible = () => document.visibilityState === 'visible' && void check();
+    document.addEventListener('visibilitychange', onVisible);
+
+    let last = Date.now();
+    let lastWrite = 0;
+    const onActivity = () => {
+      last = Date.now();
+      if (last - lastWrite > 15_000) {
+        lastWrite = last;
+        touchSession();
+      }
+    };
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    const idleTimer = window.setInterval(async () => {
+      const minutes = (await settingsService.get()).autoLockMinutes ?? 15;
+      if (minutes > 0 && Date.now() - last > minutes * 60_000) {
+        await authService.logout('idle');
+        setUser(null);
+      }
+    }, 30_000);
+
     return () => {
       window.clearInterval(timer);
+      window.clearInterval(idleTimer);
       document.removeEventListener('visibilitychange', onVisible);
+      events.forEach((e) => window.removeEventListener(e, onActivity));
     };
-  }, []);
-  return state;
+  }, [userId, setUser]);
 }
 
 export function App() {
   const state = useBootstrap();
+  const userId = useAuthStore((s) => s.userId);
   const { theme } = useTheme();
+  useSessionServices(state === 'ready' ? userId : null);
 
   if (state === 'error') {
     return (
@@ -97,6 +132,20 @@ export function App() {
       <div className="mx-auto mt-24 max-w-md p-6">
         <LoadingBlock rows={3} />
       </div>
+    );
+  }
+
+  const toaster = (
+    <Toaster dir="rtl" position="top-center" richColors closeButton theme={theme} toastOptions={{ style: { fontFamily: 'inherit' } }} />
+  );
+
+  if (!userId) {
+    return (
+      <ErrorBoundary>
+        <LoginPage />
+        <PwaUpdater />
+        {toaster}
+      </ErrorBoundary>
     );
   }
 
@@ -122,7 +171,7 @@ export function App() {
         <ConfirmHost />
       </ErrorBoundary>
       <PwaUpdater />
-      <Toaster dir="rtl" position="top-center" richColors closeButton theme={theme} toastOptions={{ style: { fontFamily: 'inherit' } }} />
+      {toaster}
     </HashRouter>
   );
 }

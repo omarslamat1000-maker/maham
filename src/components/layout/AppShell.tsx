@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router';
-import { Bell, ChevronDown, CloudOff, Menu, Moon, Plus, Search, Sun, UserRound, X } from 'lucide-react';
+import { Bell, ChevronDown, CloudOff, KeyRound, LogOut, Menu, Moon, Plus, Search, Settings as SettingsIcon, Sun, UserRound, X } from 'lucide-react';
 import { NAV_ITEMS } from '@/app/nav';
 import { Button } from '@/components/ui/button';
 import { Kbd } from '@/components/ui/misc';
@@ -12,11 +12,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/overlay';
-import { useAction, useCurrentUser, useUnreadCount, useUsers } from '@/hooks/data';
+import { useCurrentUser, useUnreadCount } from '@/hooks/data';
 import { useTheme } from '@/hooks/useTheme';
 import { useOnline } from '@/hooks/usePwa';
 import { useUIStore } from '@/stores/uiStore';
-import { settingsService } from '@/services/settingsService';
+import { authService } from '@/services/authService';
+import { useAuthStore } from '@/stores/authStore';
 import { cn } from '@/utils/cn';
 import { isTyping } from '@/utils/dom';
 import { DataBanners } from './DataBanners';
@@ -61,14 +62,17 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
-function UserSwitcher() {
-  const users = useUsers();
+function UserMenu() {
   const me = useCurrentUser();
-  const { run } = useAction();
+  const setUser = useAuthStore((s) => s.setUser);
+  const logout = async () => {
+    await authService.logout();
+    setUser(null);
+  };
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="gap-2 px-2" aria-label="ملف العمل الحالي">
+        <Button variant="ghost" className="gap-2 px-2" aria-label="قائمة الحساب">
           <span className="flex size-7 items-center justify-center rounded-full text-xs font-bold text-white" style={{ background: me?.color ?? '#047857' }}>
             {me?.name.slice(0, 1) ?? <UserRound />}
           </span>
@@ -77,18 +81,29 @@ function UserSwitcher() {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60">
-        <DropdownMenuLabel>ملف العمل النشط (للتنظيم فقط — ليس تسجيل دخول)</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {users?.map((u) => (
-          <DropdownMenuItem key={u.id} onSelect={() => run(() => settingsService.switchUser(u.id), `أنت الآن تعمل باسم: ${u.name}`)}>
-            <span className="size-2.5 rounded-full" style={{ background: u.color }} aria-hidden />
-            <span className="flex-1">{u.name}</span>
-            {u.id === me?.id && <span className="text-xs text-primary">نشط</span>}
-          </DropdownMenuItem>
-        ))}
+        <DropdownMenuLabel>
+          <span className="block font-semibold text-foreground">{me?.name}</span>
+          <span className="block" dir="auto">
+            {me?.title}
+          </span>
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/settings">إدارة الملفات والإعدادات</Link>
+          <Link to="/settings#security">
+            <KeyRound />
+            الأمان وكلمة المرور
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/settings">
+            <SettingsIcon />
+            الإعدادات
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem destructive onSelect={logout}>
+          <LogOut />
+          تسجيل الخروج
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -215,7 +230,7 @@ export function AppShell() {
             <Button variant="ghost" size="icon" onClick={toggle} aria-label={theme === 'dark' ? 'تفعيل الوضع الفاتح' : 'تفعيل الوضع الداكن'}>
               {theme === 'dark' ? <Sun className="size-5" /> : <Moon className="size-5" />}
             </Button>
-            <UserSwitcher />
+            <UserMenu />
           </div>
         </header>
 

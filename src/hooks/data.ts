@@ -11,6 +11,7 @@ import { categoryService, ideaService } from '@/services/ideaService';
 import { notificationService } from '@/services/notificationService';
 import { settingsService, userService } from '@/services/settingsService';
 import type { ID } from '@/types/entities';
+import { useAuthStore } from '@/stores/authStore';
 
 /**
  * خطافات البيانات التفاعلية: تستدعي طبقة الخدمات فقط، ويُعاد الرسم تلقائيًا عند تغير IndexedDB.
@@ -55,10 +56,11 @@ export function useLookups() {
   }, [users, categories]);
 }
 
+/** الملف الذي سجّل الدخول في هذا التبويب */
 export function useCurrentUser() {
-  const settings = useSettings();
+  const userId = useAuthStore((s) => s.userId);
   const users = useUsers();
-  return users?.find((u) => u.id === settings?.currentUserId);
+  return users?.find((u) => u.id === userId);
 }
 
 /**
