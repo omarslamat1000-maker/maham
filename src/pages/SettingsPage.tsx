@@ -10,7 +10,6 @@ import { useAction, useCategories, useCurrentUser, useDeletedTasks, useSettings,
 import { useInstallPrompt } from '@/hooks/usePwa';
 import { useTheme } from '@/hooks/useTheme';
 import { confirmDialog } from '@/stores/uiStore';
-import { useAuthStore } from '@/stores/authStore';
 import { settingsService, userService } from '@/services/settingsService';
 import { categoryService } from '@/services/ideaService';
 import { taskService } from '@/services/taskService';
@@ -30,6 +29,7 @@ import {
   type StorageInfo,
 } from '@/services/backupService';
 import { CATEGORY_COLORS } from '@/utils/labels';
+import type { User } from '@/types/entities';
 import { downloadBlob, formatBytes } from '@/utils/file';
 import { formatDateTime } from '@/utils/date';
 
@@ -61,8 +61,8 @@ function SecuritySection() {
   return (
     <Section id="security" icon={KeyRound} title="الأمان وتسجيل الدخول">
       <div role="note" className="rounded-lg bg-muted/60 p-3 text-xs leading-relaxed text-muted-foreground">
-        تسجيل الدخول محلي: يمنع فتح التطبيق دون كلمة المرور، ويحفظ بصمة PBKDF2 فقط، ويوقف المحاولات مؤقتًا بعد {MAX_FREE_ATTEMPTS} محاولات خاطئة.
-        البيانات نفسها غير مشفّرة داخل المتصفح، لذا احمِ حساب جهازك بكلمة مرور واستخدم النسخ الاحتياطية المشفّرة.
+        البيانات مشفّرة على هذا الجهاز (AES-256-GCM) بمفتاح رئيسي لا يُفتح إلا بكلمة مرور أحد الملفين. كلمات المرور لا تُخزَّن، وتتوقف المحاولات
+        مؤقتًا بعد {MAX_FREE_ATTEMPTS} محاولات خاطئة. إن نُسيت كلمتا المرور معًا فلا يمكن استعادة البيانات إلا من نسخة احتياطية.
       </div>
 
       <form
@@ -111,34 +111,8 @@ function SecuritySection() {
             <option value={0}>معطّل (غير موصى به)</option>
           </Select>
         </Field>
-        {other && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-sm font-medium">كلمة مرور «{other.name}»</span>
-            <p className="text-xs text-muted-foreground">
-              {other.passwordHash ? 'عند نسيانها: أعد تعيينها، وسيُطلب منه إنشاء كلمة جديدة عند دخوله.' : 'لم تُنشأ بعد — ستُطلب عند أول دخول له.'}
-            </p>
-            {other.passwordHash && (
-              <Button
-                variant="outline"
-                className="self-start"
-                onClick={async () => {
-                  if (
-                    await confirmDialog({
-                      title: `إعادة تعيين كلمة مرور «${other.name}»؟`,
-                      description: 'سيُطلب منه إنشاء كلمة مرور جديدة عند دخوله التالي، ويُسجَّل الإجراء في سجل النشاط.',
-                      destructive: true,
-                      confirmText: 'إعادة التعيين',
-                    })
-                  )
-                    await run(() => authService.resetOtherPassword(other.id), 'تمت إعادة التعيين');
-                }}
-              >
-                إعادة تعيين كلمة مروره
-              </Button>
-            )}
-          </div>
-        )}
       </div>
+      {other && <TempPasswordForm other={other} />}
       <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
         {users.map((u) => (
           <span key={u.id}>
@@ -147,6 +121,60 @@ function SecuritySection() {
         ))}
       </div>
     </Section>
+  );
+}
+
+function TempPasswordForm({ other }: { other: User }) {
+  const { run, pending } = useAction();
+  const [temp, setTemp] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const state = !other.passwordHash || !other.wrappedKey ? 'pending' : other.mustChangePassword ? 'temp' : 'active';
+  return (
+    <form
+      className="space-y-3 rounded-lg border border-border p-4"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (
+          state === 'active' &&
+          !(await confirmDialog({
+            title: `تعيين كلمة مرور مؤقتة لـ«${other.name}»؟`,
+            description: 'ستتوقف كلمة مروره الحالية، وسيُطلب منه تعيين كلمة جديدة عند دخوله. يُسجَّل الإجراء في سجل النشاط.',
+            destructive: true,
+            confirmText: 'تعيين',
+          }))
+        )
+          return;
+        const r = await run(() => authService.setTemporaryPassword(other.id, temp, confirm), 'تم تعيين كلمة المرور المؤقتة');
+        if (r !== false) {
+          setTemp('');
+          setConfirm('');
+        }
+      }}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="font-medium">ملف «{other.name}»</h3>
+        <Badge tone={state === 'active' ? 'success' : state === 'temp' ? 'warning' : 'info'}>
+          {state === 'active' ? 'مفعّل' : state === 'temp' ? 'كلمة مؤقتة بانتظار تغييرها' : 'بانتظار التفعيل'}
+        </Badge>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {state === 'pending'
+          ? 'لتفعيل هذا الملف: عيّن له كلمة مرور مؤقتة وأبلغه بها بطريقة آمنة. سيُطلب منه تغييرها عند أول دخول.'
+          : 'عند نسيانه كلمة مروره: عيّن له كلمة مؤقتة جديدة. لا تُفقد أي بيانات.'}
+      </p>
+      <input type="text" name="username" autoComplete="off" value={other.name} readOnly hidden />
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Field label="كلمة المرور المؤقتة" htmlFor="tmp-pass" hint={`${MIN_PASSWORD_LENGTH} أحرف على الأقل، حروف وأرقام`}>
+          <Input id="tmp-pass" type="password" autoComplete="new-password" dir="ltr" value={temp} onChange={(e) => setTemp(e.target.value)} />
+        </Field>
+        <Field label="تأكيد الكلمة المؤقتة" htmlFor="tmp-confirm">
+          <Input id="tmp-confirm" type="password" autoComplete="new-password" dir="ltr" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        </Field>
+      </div>
+      <Button type="submit" variant="outline" loading={pending} disabled={!temp || !confirm}>
+        تعيين كلمة مرور مؤقتة
+      </Button>
+    </form>
   );
 }
 
@@ -288,10 +316,9 @@ function PreferencesSection() {
 
 function BackupSection() {
   const settings = useSettings();
-  const setUser = useAuthStore((s) => s.setUser);
   const { run, pending } = useAction();
   const [includeFiles, setIncludeFiles] = useState(true);
-  const [encrypt, setEncrypt] = useState(false);
+  const [encrypt, setEncrypt] = useState(true);
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
@@ -354,11 +381,6 @@ function BackupSection() {
     if (r) {
       toast.success(`اكتمل الاستيراد: ${r.added} جديد، ${r.updated} محدّث، ${r.skipped} بلا تغيير، ${r.blobs} ملف`);
       setPendingImport(null);
-      if (mode === 'replace') {
-        // ملفات العمل وكلمات المرور أصبحت من النسخة المستوردة — يلزم دخول جديد
-        await authService.logout();
-        setUser(null);
-      }
     }
   };
 

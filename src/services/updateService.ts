@@ -1,7 +1,7 @@
 import { getStore } from '@/data/store';
 import { firstError, updateInputSchema, type UpdateInput } from '@/domain/schemas';
 import type { ID, TaskUpdate } from '@/types/entities';
-import { checkFile } from '@/utils/file';
+import { checkFile, readFileAsArrayBuffer } from '@/utils/file';
 import { uuid } from '@/utils/id';
 import { nowIso } from '@/utils/date';
 import { actor, audit, logActivity, ServiceError } from './core';
@@ -31,17 +31,19 @@ export const updateService = {
     const parsed = updateInputSchema.safeParse(input);
     if (!parsed.success) throw new ServiceError(firstError(parsed.error));
     let blobId: string | null = null;
+    let bytes: Uint8Array | null = null;
     if (file) {
       const settings = await settingsService.get();
       const check = checkFile(file, settings.maxFileSizeMb);
       if (!check.ok) throw new ServiceError(check.error);
       blobId = uuid();
+      bytes = new Uint8Array(await readFileAsArrayBuffer(file));
     }
     const store = getStore();
     return store.transaction(async () => {
       const task = await store.tasks.get(taskId);
       if (!task || task.deletedAt) throw new ServiceError('المهمة غير موجودة');
-      if (file && blobId) await store.blobs.put({ id: blobId, blob: file, createdAt: nowIso() });
+      if (file && bytes && blobId) await store.blobs.put({ id: blobId, data: bytes, type: file.type || 'application/octet-stream', createdAt: nowIso() });
       const update: TaskUpdate = {
         id: uuid(),
         taskId,

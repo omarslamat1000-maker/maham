@@ -22,8 +22,13 @@
 6. العمليات متعددة الجداول داخل `store.transaction()`.
 7. التطبيق كله خلف `LoginPage` (`useAuthStore`). المستخدم الحالي = `useAuthStore.userId` (لكل تبويب)، وليس `settings.currentUserId`. لا تضف تبديل ملف دون كلمة مرور.
 8. الإكمال لا يتم إلا عبر `approvalService.perform(taskId, 'approved')` بعد استيفاء قائمة التحقق.
-9. تغيير بنية IndexedDB: أضف `this.version(N+1)` في `src/data/db.ts` (لا تعدّل النسخ السابقة) وحدّث `SCHEMA_VERSION` و`migrateBackupData`.
-10. التوجيه عبر `HashRouter` (متوافق مع GitHub Pages دون أخطاء 404 عند التحديث).
+9. **التشفير على القرص:** كل الجداول عدا `users` و`settings` تمر عبر `EncryptedRepository` (`data/encryptedRepository.ts`).
+   - الحقول المكشوفة (`plain`) يجب أن تكون معرّفات عشوائية فقط؛ لا تضف فهرسًا على حقل ذي معنى (حالة، تاريخ، اسم). للبحث بالمساواة على حقل حساس استخدم `blind`.
+   - داخل `store.transaction()` لا تنتظر أي عملية غير متزامنة خارج IndexedDB (مثل `blob.arrayBuffer()` أو Web Crypto) — اقرأ الملفات قبل المعاملة. التشفير متزامن (@noble).
+   - `StoredBlob` يحمل `data: Uint8Array` لا `Blob`.
+   - النسخ الاحتياطي يستبعد بيانات الاعتماد، والاستيراد يربط ملفَي العمل بملفَي الجهاز حسب الدور.
+10. تغيير بنية IndexedDB: أضف `this.version(N+1)` في `src/data/db.ts` (لا تعدّل النسخ السابقة) وحدّث `SCHEMA_VERSION` و`migrateBackupData`.
+11. التوجيه عبر `HashRouter` (متوافق مع GitHub Pages دون أخطاء 404 عند التحديث).
 
 ## Coding Standards
 
@@ -98,7 +103,7 @@ npm run check        # typecheck + lint + test + build
 ## Known Limitations
 
 - البيانات محلية لكل متصفح/جهاز؛ النقل يدوي عبر النسخ الاحتياطي.
-- تسجيل الدخول محلي (`services/authService.ts`): بصمات PBKDF2 + إيقاف مؤقت + قفل تلقائي. ليس مصادقة خادمية، والبيانات غير مشفّرة في IndexedDB. لا تصفه بأنه "آمن خادميًا".
+- تسجيل الدخول محلي (`services/authService.ts`) مع تشفير على القرص (`data/keyring.ts`). ليس مصادقة خادمية. نسيان كلمتي المرور = فقدان البيانات المحلية.
 - التنبيهات تُولَّد فقط أثناء فتح التطبيق.
 - Gemini يدوي (لا استدعاء API مباشر).
 - PDF عبر نافذة طباعة المتصفح.

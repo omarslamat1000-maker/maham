@@ -1,7 +1,7 @@
 import { getStore } from '@/data/store';
 import { deliverableInputSchema, firstError, safeUrl, type DeliverableInput } from '@/domain/schemas';
 import type { Deliverable, DeliverableApproval, DeliverableVersion, ID } from '@/types/entities';
-import { checkFile } from '@/utils/file';
+import { checkFile, readFileAsArrayBuffer } from '@/utils/file';
 import { uuid } from '@/utils/id';
 import { nowIso } from '@/utils/date';
 import { DELIVERABLE_APPROVAL_LABEL } from '@/utils/labels';
@@ -11,12 +11,15 @@ import { taskService } from './taskService';
 
 export type DeliverableSource = { file: File } | { url: string };
 
-async function validateSource(src: DeliverableSource): Promise<{ file?: File; url?: string; kindHint?: Deliverable['kind'] }> {
+async function validateSource(
+  src: DeliverableSource,
+): Promise<{ file?: File; bytes?: Uint8Array; url?: string; kindHint?: Deliverable['kind'] }> {
   if ('file' in src) {
     const settings = await settingsService.get();
     const check = checkFile(src.file, settings.maxFileSizeMb);
     if (!check.ok) throw new ServiceError(check.error);
-    return { file: src.file, kindHint: check.kind };
+    // تُقرأ البايتات قبل أي معاملة: القراءة غير المتزامنة داخل المعاملة تُغلقها
+    return { file: src.file, bytes: new Uint8Array(await readFileAsArrayBuffer(src.file)), kindHint: check.kind };
   }
   const parsed = safeUrl.safeParse(src.url);
   if (!parsed.success) throw new ServiceError(firstError(parsed.error));
@@ -39,7 +42,8 @@ export const deliverableService = {
   },
 
   async getBlob(blobId: ID): Promise<Blob | undefined> {
-    return (await getStore().blobs.get(blobId))?.blob;
+    const b = await getStore().blobs.get(blobId);
+    return b ? new Blob([b.data as Uint8Array<ArrayBuffer>], { type: b.type }) : undefined;
   },
 
   async create(taskId: ID, input: DeliverableInput, src: DeliverableSource, note = ''): Promise<Deliverable> {
@@ -56,7 +60,7 @@ export const deliverableService = {
       const a = audit();
       const deliverableId = uuid();
       const blobId = v.file ? uuid() : null;
-      if (v.file && blobId) await store.blobs.put({ id: blobId, blob: v.file, createdAt: nowIso() });
+      if (v.file && v.bytes && blobId) await store.blobs.put({ id: blobId, data: v.bytes, type: v.file.type || 'application/octet-stream', createdAt: nowIso() });
       const version: DeliverableVersion = {
         id: uuid(),
         deliverableId,
@@ -97,7 +101,7 @@ export const deliverableService = {
       const d = await store.deliverables.get(deliverableId);
       if (!d || d.deletedAt) throw new ServiceError('المخرج غير موجود');
       const blobId = v.file ? uuid() : null;
-      if (v.file && blobId) await store.blobs.put({ id: blobId, blob: v.file, createdAt: nowIso() });
+      if (v.file && v.bytes && blobId) await store.blobs.put({ id: blobId, data: v.bytes, type: v.file.type || 'application/octet-stream', createdAt: nowIso() });
       const version: DeliverableVersion = {
         id: uuid(),
         deliverableId,

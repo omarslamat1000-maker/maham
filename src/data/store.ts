@@ -16,6 +16,7 @@ import type {
 } from '@/types/entities';
 import { getDb, TABLE_NAMES } from './db';
 import { DexieRepository, type Repository } from './repository';
+import { EncryptedBlobRepository, EncryptedRepository } from './encryptedRepository';
 
 /** حاوية المستودعات — نقطة الوصول الوحيدة للبيانات من طبقة الخدمات */
 export interface DataStore {
@@ -42,23 +43,36 @@ let cached: { db: ReturnType<typeof getDb>; store: DataStore } | null = null;
 export function getStore(): DataStore {
   const db = getDb();
   if (cached && cached.db === db) return cached.store;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const enc = <T extends { id: string }>(table: any, plain: string[] = [], blind?: Record<string, string>) =>
+    new EncryptedRepository<T>(table, { plain, blind });
   const store: DataStore = {
+    // غير مشفّرة: مطلوبة قبل تسجيل الدخول (أسماء الملفات والتحقق من كلمات المرور) والإعدادات العامة
     users: new DexieRepository(db.users),
-    categories: new DexieRepository(db.categories),
-    tasks: new DexieRepository(db.tasks),
-    steps: new DexieRepository(db.steps),
-    updates: new DexieRepository(db.updates),
-    deliverables: new DexieRepository(db.deliverables),
-    deliverableVersions: new DexieRepository(db.deliverableVersions),
-    blobs: new DexieRepository(db.blobs),
-    checklist: new DexieRepository(db.checklist),
-    approvals: new DexieRepository(db.approvals),
-    ideas: new DexieRepository(db.ideas),
-    notifications: new DexieRepository(db.notifications),
-    activity: new DexieRepository(db.activity),
     settings: new DexieRepository(db.settings),
+    // مشفّرة على القرص (AES-256-GCM)
+    categories: enc(db.categories),
+    tasks: enc(db.tasks),
+    steps: enc(db.steps, ['taskId']),
+    updates: enc(db.updates, ['taskId']),
+    deliverables: enc(db.deliverables, ['taskId']),
+    deliverableVersions: enc(db.deliverableVersions, ['deliverableId', 'taskId']),
+    blobs: new EncryptedBlobRepository(db.blobs as never),
+    checklist: enc(db.checklist, ['taskId']),
+    approvals: enc(db.approvals, ['taskId']),
+    ideas: enc(db.ideas),
+    notifications: enc(db.notifications, ['taskId'], { dedupeKey: 'dedupeHash' }),
+    activity: enc(db.activity, ['taskId']),
     transaction: (fn) => db.transaction('rw', TABLE_NAMES.map((n) => db.table(n)), fn),
   };
   cached = { db, store };
   return store;
+}
+
+/** الجداول المشفّرة — لترحيل البيانات القديمة غير المشفّرة */
+export function encryptedRepos(): { encryptLegacyRows(): Promise<number> }[] {
+  const s = getStore();
+  return [s.categories, s.tasks, s.steps, s.updates, s.deliverables, s.deliverableVersions, s.checklist, s.approvals, s.ideas, s.notifications, s.activity, s.blobs] as unknown as {
+    encryptLegacyRows(): Promise<number>;
+  }[];
 }

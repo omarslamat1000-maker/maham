@@ -27,7 +27,7 @@ export const DB_NAME = 'maham';
  *
  * ثم حدّث SCHEMA_VERSION و migrateBackupData في backupService لدعم استيراد النسخ الأقدم.
  */
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const TABLE_NAMES = [
   'users',
@@ -80,6 +80,16 @@ export class MahamDB extends Dexie {
       notifications: 'id, &dedupeKey, taskId, createdAt',
       activity: 'id, taskId, at',
       settings: 'id',
+    });
+    // v2 — التشفير على القرص: إزالة الفهارس التي تكشف محتوى (الحالة، التواريخ، المسؤول…)
+    // تبقى فقط معرّفات الربط العشوائية وفهرس أعمى لمفتاح منع تكرار التنبيهات.
+    // تشفير السجلات نفسها يتم بعد فتح المفاتيح عند أول دخول (لا مفاتيح أثناء الترقية).
+    this.version(2).stores({
+      tasks: 'id',
+      updates: 'id, taskId',
+      ideas: 'id',
+      notifications: 'id, &dedupeHash, taskId',
+      activity: 'id, taskId',
     });
   }
 }

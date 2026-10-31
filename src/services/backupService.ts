@@ -5,8 +5,8 @@ import type { Repository } from '@/data/repository';
 import { PRIORITIES, SUBMISSION_STATUSES, TASK_STATUSES } from '@/types/entities';
 import { base64ToBytes, bytesToBase64, decryptText, encryptText, sha256Hex, type EncryptedBlob } from '@/utils/crypto';
 import { nowIso, toDateOnly } from '@/utils/date';
-import { readFileAsArrayBuffer, readFileAsText } from '@/utils/file';
-import { actor, logActivity, setActor } from './core';
+import { readFileAsText } from '@/utils/file';
+import { actor, logActivity } from './core';
 
 export class BackupError extends Error {
   constructor(message: string) {
@@ -122,15 +122,58 @@ function repoOf(store: DataStore, t: TableName): Repository<{ id: string }> {
   return store[t] as unknown as Repository<{ id: string }>;
 }
 
+const CREDENTIAL_FIELDS = [
+  'passwordHash',
+  'passwordSalt',
+  'passwordIterations',
+  'passwordUpdatedAt',
+  'passwordVersion',
+  'failedAttempts',
+  'lockedUntil',
+  'wrappedKey',
+  'mustChangePassword',
+] as const;
+
+function stripCredentials(u: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...u };
+  for (const f of CREDENTIAL_FIELDS) delete out[f];
+  return out;
+}
+
+const userSlot = (u: { title?: unknown }, index: number) => (u.title === 'System Administrator' ? 0 : u.title === 'Second Administrator' ? 1 : index);
+
+/**
+ * يربط ملفَي العمل في النسخة بملفَي هذا الجهاز (حسب الدور)، لأن المعرّفات تختلف بين الأجهزة.
+ * يعيد خريطة: معرّف النسخة ← المعرّف المحلي.
+ */
+function mapUsers(backupUsers: Record<string, unknown>[], localUsers: { id: string; title: string }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  const local = [...localUsers].map((u, i) => ({ u, slot: userSlot(u, i) }));
+  backupUsers.forEach((bu, i) => {
+    const target = local.find((l) => l.slot === userSlot(bu, i));
+    if (target && typeof bu.id === 'string') map.set(bu.id, target.u.id);
+  });
+  return map;
+}
+
+/** يستبدل أي إشارة لمعرّف مستخدم من النسخة بالمعرّف المحلي (المعرّفات UUID فريدة فالاستبدال آمن) */
+function remapRecord<T extends Record<string, unknown>>(r: T, map: Map<string, string>): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(r)) out[k] = typeof v === 'string' && map.has(v) ? map.get(v) : v;
+  return out as T;
+}
+
 export async function buildBackup(opts: ExportOptions): Promise<BackupFile> {
   const store = getStore();
   const tables = {} as BackupPayload['tables'];
   for (const t of DATA_TABLES) tables[t] = (await repoOf(store, t).list()) as unknown as Record<string, unknown>[];
+  // لا تُصدَّر بيانات الاعتماد ومفاتيح التشفير الخاصة بهذا الجهاز
+  tables.users = tables.users.map(stripCredentials);
+  tables.settings = tables.settings.map(({ encryption: _e, ...rest }) => rest);
   const blobs: BlobRecord[] = [];
   if (opts.includeFiles) {
     for (const b of await store.blobs.list()) {
-      const bytes = new Uint8Array(await readFileAsArrayBuffer(b.blob));
-      blobs.push({ id: b.id, mimeType: b.blob.type || 'application/octet-stream', createdAt: b.createdAt, base64: bytesToBase64(bytes) });
+      blobs.push({ id: b.id, mimeType: b.type || 'application/octet-stream', createdAt: b.createdAt, base64: bytesToBase64(b.data) });
     }
   }
   const payload: BackupPayload = { tables, blobs };
@@ -252,7 +295,7 @@ export async function summarizeImport(backup: BackupFile): Promise<ImportSummary
   let conflicts = 0;
   let currentTotal = 0;
   for (const t of DATA_TABLES) {
-    if (t === 'settings' || t === 'notifications' || t === 'activity') continue;
+    if (t === 'settings' || t === 'notifications' || t === 'activity' || t === 'users') continue;
     const current = new Map((await repoOf(store, t).list()).map((r) => [r.id, r as unknown as Record<string, unknown>]));
     currentTotal += current.size;
     for (const r of backup.payload.tables[t]) {
@@ -297,22 +340,41 @@ export interface ImportResult {
 export async function importBackup(backup: BackupFile, mode: ImportMode): Promise<ImportResult> {
   const store = getStore();
   const result: ImportResult = { added: 0, updated: 0, skipped: 0, blobs: 0 };
-  const previousActor = (await store.settings.get('app'))?.currentUserId ?? null;
+  const localUsers = await store.users.list();
+  const userMap = mapUsers(backup.payload.tables.users, localUsers);
 
   await store.transaction(async () => {
     if (mode === 'replace') {
-      for (const t of TABLE_NAMES) await repoOf(store, t).clear();
+      // تُحفظ ملفات العمل (وبيانات اعتمادها ومفاتيحها) والإعدادات المحلية دائمًا
+      for (const t of TABLE_NAMES) if (t !== 'users' && t !== 'settings') await repoOf(store, t).clear();
     }
+
+    // ملفات العمل: تحديث بيانات العرض فقط (الاسم واللون) — لا تُستورد كلمات مرور أو مفاتيح
+    for (const bu of backup.payload.tables.users) {
+      const localId = userMap.get(bu.id as string);
+      const local = localUsers.find((u) => u.id === localId);
+      if (!local) continue;
+      const newer = typeof bu.updatedAt === 'string' && bu.updatedAt > local.updatedAt;
+      if (mode === 'replace' || newer) {
+        await store.users.put({
+          ...local,
+          name: typeof bu.name === 'string' && bu.name.trim() ? bu.name : local.name,
+          color: typeof bu.color === 'string' ? bu.color : local.color,
+        });
+        result.updated++;
+      } else result.skipped++;
+    }
+
     for (const t of DATA_TABLES) {
+      if (t === 'users' || t === 'settings') continue;
       const repo = repoOf(store, t);
-      const rows = backup.payload.tables[t] as unknown as { id: string; updatedAt?: string }[];
+      const rows = (backup.payload.tables[t] as Record<string, unknown>[]).map((r) => remapRecord(r, userMap)) as unknown as {
+        id: string;
+        updatedAt?: string;
+      }[];
       if (mode === 'replace') {
         await repo.bulkPut(rows);
         result.added += rows.length;
-        continue;
-      }
-      if (t === 'settings') {
-        result.skipped += rows.length; // الإعدادات المحلية تُحفظ في الدمج
         continue;
       }
       for (const r of rows) {
@@ -337,23 +399,12 @@ export async function importBackup(backup: BackupFile, mode: ImportMode): Promis
     }
     for (const b of backup.payload.blobs) {
       if (mode === 'merge' && (await store.blobs.get(b.id))) continue;
-      await store.blobs.put({ id: b.id, createdAt: b.createdAt, blob: new Blob([base64ToBytes(b.base64)], { type: b.mimeType }) });
+      await store.blobs.put({ id: b.id, createdAt: b.createdAt, type: b.mimeType, data: base64ToBytes(b.base64) });
       result.blobs++;
-    }
-
-    // ضمان صلاحية ملف العمل الحالي بعد الاستيراد
-    const users = await store.users.list();
-    const settings = await store.settings.get('app');
-    if (settings) {
-      const keep = users.find((u) => u.id === previousActor) ?? users.find((u) => u.id === settings.currentUserId) ?? users[0];
-      if (keep) {
-        await store.settings.put({ ...settings, currentUserId: keep.id });
-        setActor(keep.id);
-      }
     }
   });
 
-  if ((await store.users.count()) > 0) {
+  {
     await logActivity('backup', 'backup', 'imported', `استيراد نسخة احتياطية (${mode === 'merge' ? 'دمج' : 'استبدال كامل'}): ${result.added} جديد، ${result.updated} محدّث`);
   }
   return result;

@@ -20,8 +20,26 @@ export const DEFAULT_SETTINGS: Omit<Settings, 'updatedAt'> = {
 
 const SYSTEM = 'system';
 
+/** التصنيفات الافتراضية — تُنشأ عند تفعيل التشفير (تتطلب مفتاح البيانات) */
+export async function seedDefaultCategories(): Promise<void> {
+  const store = getStore();
+  if ((await store.categories.count()) > 0) return;
+  const ts = nowIso();
+  const cats: Category[] = ['عمل', 'شخصي', 'مشاريع', 'إداري'].map((name, i) => ({
+    id: uuid(),
+    name,
+    color: CATEGORY_COLORS[i],
+    deletedAt: null,
+    createdAt: ts,
+    updatedAt: ts,
+    createdBy: SYSTEM,
+    updatedBy: SYSTEM,
+  }));
+  await store.categories.bulkPut(cats);
+}
+
 /**
- * تهيئة أول تشغيل: ملفا العمل والتصنيفات الافتراضية والإعدادات.
+ * تهيئة أول تشغيل: ملفا العمل والإعدادات (غير مشفّرة لأنها مطلوبة قبل الدخول).
  * لا تُنشأ أي مهام أو أرقام وهمية.
  */
 export async function ensureSetup(): Promise<Settings> {
@@ -45,18 +63,6 @@ export async function ensureSetup(): Promise<Settings> {
       users = [mk('مدير النظام', 'System Administrator', '#047857'), mk('المدير الثاني', 'Second Administrator', '#0f766e')];
       await store.users.bulkPut(users);
 
-      const catTs = nowIso();
-      const cats: Category[] = ['عمل', 'شخصي', 'مشاريع', 'إداري'].map((name, i) => ({
-        id: uuid(),
-        name,
-        color: CATEGORY_COLORS[i],
-        deletedAt: null,
-        createdAt: catTs,
-        updatedAt: catTs,
-        createdBy: SYSTEM,
-        updatedBy: SYSTEM,
-      }));
-      await store.categories.bulkPut(cats);
     }
 
     let settings = await store.settings.get('app');

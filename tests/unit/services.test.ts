@@ -2,7 +2,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resetDbForTests } from '@/data/db';
 import { getStore } from '@/data/store';
-import { ensureSetup } from '@/services/setupService';
+import { ensureSetup, seedDefaultCategories } from '@/services/setupService';
+import { keyring } from '@/data/keyring';
 import { taskService } from '@/services/taskService';
 import { stepService } from '@/services/stepService';
 import { updateService } from '@/services/updateService';
@@ -21,6 +22,9 @@ function file(name: string, content = 'hello', type = 'application/octet-stream'
 beforeEach(async () => {
   await resetDbForTests();
   await ensureSetup();
+  // فتح حلقة المفاتيح بمفتاح اختباري (يعادل تسجيل الدخول) ثم البذر الأولي
+  keyring.unlock(keyring.generateMaster());
+  await seedDefaultCategories();
 });
 
 describe('التهيئة', () => {
@@ -31,7 +35,9 @@ describe('التهيئة', () => {
     expect(await store.tasks.count()).toBe(0);
     // استدعاء ثانٍ لا يكرر البيانات
     await ensureSetup();
+    await seedDefaultCategories();
     expect(await store.users.count()).toBe(2);
+    expect(await store.categories.count()).toBe(4);
   });
 });
 
@@ -243,7 +249,7 @@ describe('النسخ الاحتياطي والاستيراد', () => {
     await importBackup(parsed.backup, 'replace');
     expect((await taskService.listActive()).map((x) => x.title)).toEqual(['مهمة للنسخ']);
     const [b] = await getStore().blobs.list();
-    expect(await b.blob.text()).toBe('PDFDATA');
+    expect(new TextDecoder().decode(b.data)).toBe('PDFDATA');
   });
 
   it('الدمج لا يحذف البيانات المحلية ويحتفظ بالأحدث عند التعارض', async () => {

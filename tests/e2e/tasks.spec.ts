@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { confirm, createTask, isoDate, openApp, openTab } from './helpers';
+import { confirm, createTask, isoDate, login, openApp, openTab } from './helpers';
 
 test.describe('إدارة المهام', () => {
   test('إنشاء وتعديل وحذف مهمة بعد التأكيد ثم استرجاعها', async ({ page }) => {
@@ -116,6 +116,8 @@ test.describe('إدارة المهام', () => {
     await openApp(page);
     await createTask(page, 'مهمة دائمة');
     await page.reload();
+    // بعد إعادة التحميل يُطلب الدخول لفك التشفير، ثم تظهر البيانات كما هي
+    await login(page);
     await expect(page.getByRole('heading', { level: 1, name: 'مهمة دائمة' })).toBeVisible();
     await openApp(page, '/tasks');
     await expect(page.getByRole('link', { name: 'مهمة دائمة' })).toBeVisible();

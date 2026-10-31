@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Eye, EyeOff, Gauge, KeyRound, Lock, LogIn, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
+import { Check, Eye, EyeOff, Gauge, Hourglass, KeyRound, Lock, LogIn, ShieldCheck, Sparkles, WifiOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input, Label } from '@/components/ui/form';
 import { Dialog, DialogContent, DialogFooter } from '@/components/ui/overlay';
-import { useUsers } from '@/hooks/data';
-import { authService, AuthError, hasPassword, MIN_PASSWORD_LENGTH } from '@/services/authService';
+import { useSettings, useUsers } from '@/hooks/data';
+import { authService, AuthError, MIN_PASSWORD_LENGTH, profileStatus, type ProfileStatus } from '@/services/authService';
 import { toUserMessage } from '@/services/core';
 import { useAuthStore } from '@/stores/authStore';
 import type { User } from '@/types/entities';
@@ -12,7 +12,7 @@ import { cn } from '@/utils/cn';
 
 const FEATURES = [
   { icon: Gauge, title: 'متابعة دقيقة للإنجاز', text: 'إنجاز مرجّح بالخطوات ومؤشرات أداء حية' },
-  { icon: ShieldCheck, title: 'اعتماد وتسليم منظّم', text: 'مسار مراجعة موثّق بسجل نشاط كامل' },
+  { icon: ShieldCheck, title: 'بيانات مشفّرة بالكامل', text: 'تشفير AES-256 لا يُفتح إلا بكلمة مرورك' },
   { icon: WifiOff, title: 'يعمل دون اتصال', text: 'بياناتك تبقى على جهازك' },
 ];
 
@@ -35,7 +35,7 @@ function useCountdown(until: string | null): number {
   return until ? Math.max(0, Math.ceil((new Date(until).getTime() - now) / 1000)) : 0;
 }
 
-function ProfileCard({ user, selected, onSelect }: { user: User; selected: boolean; onSelect: () => void }) {
+function ProfileCard({ user, status, selected, onSelect }: { user: User; status: ProfileStatus; selected: boolean; onSelect: () => void }) {
   return (
     <button
       type="button"
@@ -59,7 +59,8 @@ function ProfileCard({ user, selected, onSelect }: { user: User; selected: boole
         <span className="block truncate text-xs text-muted-foreground" dir="auto">
           {user.title}
         </span>
-        {!hasPassword(user) && <span className="mt-1 inline-block text-[11px] font-medium text-warning">يتطلب إنشاء كلمة مرور</span>}
+        {status === 'create' && <span className="mt-1 inline-block text-[11px] font-medium text-warning">يتطلب إنشاء كلمة مرور</span>}
+        {status === 'pending_activation' && <span className="mt-1 inline-block text-[11px] font-medium text-info">بانتظار التفعيل</span>}
       </span>
       <span
         className={cn(
@@ -76,7 +77,11 @@ function ProfileCard({ user, selected, onSelect }: { user: User; selected: boole
 
 export default function LoginPage() {
   const users = useUsers();
+  const settings = useSettings();
+  const encryptionOn = !!settings?.encryption;
   const setUser = useAuthStore((s) => s.setUser);
+  /** بعد الدخول بكلمة مؤقتة: يجب تعيين كلمة دائمة قبل المتابعة */
+  const [forcedChangeFor, setForcedChangeFor] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -89,10 +94,14 @@ export default function LoginPage() {
   const remaining = useCountdown(lockedUntil);
 
   const selected = useMemo(() => users?.find((u) => u.id === selectedId), [users, selectedId]);
-  const creating = !!selected && !hasPassword(selected);
+  const status = selected ? profileStatus(selected, encryptionOn) : null;
+  const creating = status === 'create' || (!!forcedChangeFor && forcedChangeFor === selectedId);
+  const pendingActivation = status === 'pending_activation' && !forcedChangeFor;
+  const otherName = users?.find((u) => u.id !== selectedId)?.name ?? 'المستخدم الآخر';
   const st = strength(password);
 
   useEffect(() => {
+    setForcedChangeFor(null);
     setPassword('');
     setConfirm('');
     setError(null);
@@ -107,8 +116,21 @@ export default function LoginPage() {
     setPending(true);
     setError(null);
     try {
-      const u = creating ? await authService.createPassword(selected.id, password, confirm) : await authService.login(selected.id, password);
-      setUser(u.id);
+      if (forcedChangeFor) {
+        await authService.completeForcedChange(password, confirm);
+        setUser(selected.id);
+      } else if (status === 'create') {
+        const u = await authService.createPassword(selected.id, password, confirm);
+        setUser(u.id);
+      } else {
+        const r = await authService.login(selected.id, password);
+        if (r.mustChangePassword) {
+          setForcedChangeFor(selected.id);
+          setPassword('');
+          setConfirm('');
+          passwordRef.current?.focus();
+        } else setUser(r.user.id);
+      }
     } catch (err) {
       setError(toUserMessage(err));
       if (err instanceof AuthError && err.lockedUntil) setLockedUntil(err.lockedUntil);
@@ -201,11 +223,36 @@ export default function LoginPage() {
                 <div role="radiogroup" aria-label="ملف العمل" className="grid gap-3">
                   {!users
                     ? Array.from({ length: 2 }, (_, i) => <div key={i} className="h-20 animate-pulse rounded-2xl bg-muted" />)
-                    : users.map((u) => <ProfileCard key={u.id} user={u} selected={u.id === selectedId} onSelect={() => setSelectedId(u.id)} />)}
+                    : users.map((u) => (
+                        <ProfileCard
+                          key={u.id}
+                          user={u}
+                          status={profileStatus(u, encryptionOn)}
+                          selected={u.id === selectedId}
+                          onSelect={() => {
+                            // التخلي عن تغيير كلمة مؤقتة يقفل المفاتيح مجددًا
+                            if (forcedChangeFor) void authService.logout();
+                            setSelectedId(u.id);
+                          }}
+                        />
+                      ))}
                 </div>
               </fieldset>
 
-              {selected && (
+              {selected && pendingActivation && (
+                <div role="note" className="flex gap-3 rounded-xl border border-info/30 bg-info-soft p-4 text-sm">
+                  <Hourglass className="mt-0.5 size-5 shrink-0 text-info" aria-hidden />
+                  <div className="space-y-1">
+                    <p className="font-semibold">هذا الملف بانتظار التفعيل</p>
+                    <p className="text-muted-foreground">
+                      البيانات مشفّرة، ولا يمكن فتحها لهذا الملف إلا بعد أن يعيّن له «{otherName}» كلمة مرور مؤقتة من
+                      <em> الإعدادات ← الأمان وتسجيل الدخول</em>. بعدها ادخل بها وستُطلب منك كلمة مرور جديدة.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {selected && !pendingActivation && (
                 <div className="space-y-4">
                   {/* اسم مستخدم مخفي لدعم مديري كلمات المرور */}
                   <input type="text" name="username" autoComplete="username" value={selected.name} readOnly hidden />
@@ -213,7 +260,9 @@ export default function LoginPage() {
                     <div role="note" className="flex gap-2 rounded-xl border border-info/30 bg-info-soft p-3 text-sm">
                       <KeyRound className="mt-0.5 size-4 shrink-0 text-info" aria-hidden />
                       <span>
-                        أول دخول لـ«{selected.name}». أنشئ كلمة مرور ({MIN_PASSWORD_LENGTH} أحرف على الأقل، حروف وأرقام).
+                        {forcedChangeFor
+                          ? `دخلت بكلمة مرور مؤقتة. عيّن الآن كلمة مرورك الدائمة (${MIN_PASSWORD_LENGTH} أحرف على الأقل، حروف وأرقام).`
+                          : `أول دخول على هذا الجهاز. أنشئ كلمة مرور لـ«${selected.name}» (${MIN_PASSWORD_LENGTH} أحرف على الأقل، حروف وأرقام). ستحمي تشفير بياناتك ولا يمكن استعادتها إن نُسيت.`}
                       </span>
                     </div>
                   )}
@@ -283,7 +332,7 @@ export default function LoginPage() {
 
                   <Button type="submit" size="lg" className="h-12 w-full text-base" loading={pending} disabled={!password || remaining > 0}>
                     {!pending && <LogIn aria-hidden />}
-                    {creating ? 'إنشاء كلمة المرور والدخول' : 'تسجيل الدخول'}
+                    {forcedChangeFor ? 'حفظ كلمة المرور والدخول' : creating ? 'إنشاء كلمة المرور والدخول' : 'تسجيل الدخول'}
                   </Button>
 
                   {!creating && (
@@ -298,8 +347,8 @@ export default function LoginPage() {
             <p className="mt-10 flex gap-2 border-t border-border pt-5 text-xs leading-relaxed text-muted-foreground">
               <ShieldCheck className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
               <span>
-                دخول محلي يحمي الوصول إلى التطبيق على هذا الجهاز، مع قفل تلقائي عند عدم النشاط. كلمات المرور لا تُخزَّن، بل بصمتها المشفّرة فقط. البيانات
-                غير مرسلة لأي خادم؛ لحماية كاملة احمِ حساب جهازك وصدّر نسخًا احتياطية مشفّرة.
+                بياناتك مشفّرة على هذا الجهاز (AES-256) بمفتاح لا يُفتح إلا بكلمة المرور، ولا تُرسل لأي خادم. كلمات المرور لا تُخزَّن، ويُقفل التطبيق
+                تلقائيًا عند عدم النشاط. صدّر نسخًا احتياطية مشفّرة بانتظام.
               </span>
             </p>
           </div>
@@ -320,11 +369,12 @@ function ForgotDialog({ open, onClose }: { open: boolean; onClose: () => void })
       <DialogContent title="نسيت كلمة المرور؟" description="لا يوجد خادم لاستعادة كلمات المرور، لذلك تتوفر الخيارات التالية:">
         <ol className="list-inside list-decimal space-y-3 text-sm">
           <li>
-            <strong>الطريقة الموصى بها:</strong> يسجّل المستخدم الآخر دخوله ثم يعيد تعيين كلمة مرورك من <em>الإعدادات ← الأمان وتسجيل الدخول</em>،
-            وتنشئ كلمة جديدة عند دخولك التالي.
+            <strong>الطريقة الموصى بها:</strong> يسجّل المستخدم الآخر دخوله ويعيّن لك كلمة مرور مؤقتة من <em>الإعدادات ← الأمان وتسجيل الدخول</em>،
+            ثم تدخل بها وتعيّن كلمة جديدة. لا تُفقد أي بيانات.
           </li>
           <li>
-            <strong>الملاذ الأخير:</strong> حذف جميع بيانات التطبيق من هذا المتصفح، ثم استيراد آخر نسخة احتياطية (تتضمن كلمات المرور التي كانت وقت التصدير).
+            <strong>الملاذ الأخير (إن نسي الاثنان):</strong> البيانات مشفّرة ولا يمكن فكها دون كلمة مرور. احذف جميع بيانات التطبيق من هذا المتصفح، ثم أنشئ كلمة مرور
+            جديدة واستورد آخر نسخة احتياطية.
           </li>
         </ol>
         <div className="mt-4 space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3">

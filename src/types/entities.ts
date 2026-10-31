@@ -47,6 +47,12 @@ export interface User extends AuditFields {
   failedAttempts?: number;
   lockedUntil?: Timestamp | null;
   lastLoginAt?: Timestamp | null;
+  /** 2 = بصمة HKDF منفصلة عن مفتاح التغليف (الإصدار 1 كان يخزن ناتج PBKDF2 مباشرة) */
+  passwordVersion?: number;
+  /** المفتاح الرئيسي للبيانات مغلّفًا بمفتاح مشتق من كلمة مرور هذا الملف */
+  wrappedKey?: { iv: string; ct: string } | null;
+  /** يجب تغيير كلمة المرور (مؤقتة) عند الدخول التالي */
+  mustChangePassword?: boolean;
 }
 
 // ───────────── التصنيفات ─────────────
@@ -168,10 +174,11 @@ export interface DeliverableVersion extends AuditFields {
   note: string;
 }
 
-/** محتوى الملفات الثنائية محفوظ في جدول منفصل لتسريع الاستعلامات */
+/** محتوى الملفات الثنائية محفوظ في جدول منفصل (مشفّرًا على القرص) */
 export interface StoredBlob {
   id: ID;
-  blob: Blob;
+  data: Uint8Array;
+  type: string;
   createdAt: Timestamp;
 }
 
@@ -285,6 +292,8 @@ export interface AppSettings {
   onboardingDismissed: boolean;
   /** القفل التلقائي بعد عدم النشاط بالدقائق (0 = معطّل) */
   autoLockMinutes?: number;
+  /** حالة التشفير على القرص */
+  encryption?: { version: number; enabledAt: Timestamp } | null;
 }
 
 export interface Settings extends AppSettings {

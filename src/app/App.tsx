@@ -9,7 +9,7 @@ import { LoadingBlock } from '@/components/ui/misc';
 import { Button } from '@/components/ui/button';
 import { ensureSetup } from '@/services/setupService';
 import { notificationService } from '@/services/notificationService';
-import { authService, touchSession } from '@/services/authService';
+import { authService } from '@/services/authService';
 import { settingsService } from '@/services/settingsService';
 import { useAuthStore } from '@/stores/authStore';
 import LoginPage from '@/pages/LoginPage';
@@ -59,8 +59,9 @@ function useBootstrap() {
   const setUser = useAuthStore((s) => s.setUser);
   useEffect(() => {
     ensureSetup()
-      .then(async (settings) => {
-        setUser(await authService.restore(settings.autoLockMinutes ?? 15));
+      .then(() => {
+        // مفتاح البيانات في الذاكرة فقط: كل تحميل جديد للصفحة يبدأ بشاشة الدخول
+        setUser(null);
         setState('ready');
         void requestPersistence();
       })
@@ -81,13 +82,8 @@ function useSessionServices(userId: string | null) {
     document.addEventListener('visibilitychange', onVisible);
 
     let last = Date.now();
-    let lastWrite = 0;
     const onActivity = () => {
       last = Date.now();
-      if (last - lastWrite > 15_000) {
-        lastWrite = last;
-        touchSession();
-      }
     };
     const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
     events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));

@@ -26,7 +26,7 @@ export function isQuotaError(e: unknown): boolean {
 export function toUserMessage(e: unknown): string {
   if (isQuotaError(e)) return 'مساحة التخزين في المتصفح ممتلئة. احذف بعض المرفقات أو صدّر نسخة احتياطية ثم نظّف البيانات.';
   if (e instanceof ServiceError) return e.message;
-  if (e instanceof Error && (e.name === 'LifecycleError' || e.name === 'BackupError')) return e.message;
+  if (e instanceof Error && ['LifecycleError', 'BackupError', 'LockedError'].includes(e.name)) return e.message;
   return 'حدث خطأ غير متوقع. حاول مرة أخرى.';
 }
 

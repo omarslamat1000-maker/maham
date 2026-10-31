@@ -7,6 +7,8 @@ test('تصدير نسخة احتياطية واستيرادها في متصفح 
   await createTask(page, 'مهمة للنقل بين الأجهزة');
 
   await openApp(page, '/settings');
+  // التشفير مفعّل افتراضيًا — هذا الاختبار يتحقق من النسخة غير المشفّرة
+  await page.getByLabel(/تشفير النسخة/).uncheck();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: 'تصدير النسخة الاحتياطية' }).click();
   const download = await downloadPromise;
