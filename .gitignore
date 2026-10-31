@@ -1,0 +1,20 @@
+node_modules
+dist
+dev-dist
+coverage
+playwright-report
+test-results
+blob-report
+*.local
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+*.log
+
+# ملفات النسخ الاحتياطية لا تُرفع إلى المستودع أبدًا
+*.maham.json
+*.maham-backup.json
+maham-backup-*.json
+backups/
